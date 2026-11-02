@@ -1,0 +1,105 @@
+# 放在 splitter 仓库的 .github/workflows/split.yml
+# 需要：仓库变量 MONOREPO_URL、AUTH_MODE(app|pat)
+# 需要 secrets：app -> APP_ID + APP_PRIVATE_KEY；pat -> SPLIT_TOKEN
+name: split
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout splitter
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: GitHub App token
+        id: app
+        if: ${{ vars.AUTH_MODE == 'app' }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Clone public monorepo (no credentials)
+        env:
+          MONOREPO_URL: ${{ vars.MONOREPO_URL }}
+        run: |
+          set -euo pipefail
+          : "${MONOREPO_URL:?请在 splitter 仓库设置变量 MONOREPO_URL}"
+          git clone --quiet "$MONOREPO_URL" "$RUNNER_TEMP/mono"
+          git -C "$RUNNER_TEMP/mono" fetch --quiet --tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git -C "$RUNNER_TEMP/mono" config user.name "split bot"
+          git -C "$RUNNER_TEMP/mono" config user.email "bot@users.noreply.github.com"
+
+      - name: Split and push 22 packages
+        env:
+          ORG: ${{ github.repository_owner }}
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          PAT: ${{ secrets.SPLIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          TOKEN="${APP_TOKEN:-$PAT}"
+          : "${TOKEN:?缺少凭证：app 模式填 APP_ID/APP_PRIVATE_KEY，pat 模式填 SPLIT_TOKEN}"
+          : "${ORG:?无法确定 org 名}"
+
+          MONO="$RUNNER_TEMP/mono"
+          cd "$MONO"
+
+          TAGS=$(git tag -l 'v*')
+          echo "monorepo tags: ${TAGS:-<none>}"
+
+          for dir in packages/*/; do
+            name=$(basename "$dir")
+            repo=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+            remote="https://x-access-token:${TOKEN}@github.com/${ORG}/${repo}.git"
+
+            # 分支：只认 main
+            sha=$(git subtree split --prefix="packages/$name" origin/main)
+            git push --quiet "$remote" "$sha:refs/heads/main" --force
+
+            # tag：Packagist 的版本号完全依赖这一步
+            for tag in $TAGS; do
+              tsha=$(git subtree split --prefix="packages/$name" "$tag")
+              git push --quiet "$remote" "$tsha:refs/tags/$tag" --force
+            done
+
+            echo "pushed $repo ($sha)"
+          done
+
+          # 历史变长后可换成（需先下载 splitsh-lite）：
+          # sha=$(splitsh-lite --prefix="packages/$name" --origin=origin/main)
+
+      - name: Mirror monorepo + heartbeat
+        env:
+          ORG: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          SELF_TOKEN: ${{ github.token }}
+          SPLITTER: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${SELF_TOKEN}@github.com/${ORG}/${REPO}.git"
+
+          # 公开只读整库镜像（非默认分支，不覆盖 workflow）
+          git -C "$RUNNER_TEMP/mono" push --quiet "$remote" \
+            "refs/remotes/origin/main:refs/heads/mirror" --force || true
+
+          # 每天一个空转 commit，防止 60 天无活动被 GitHub 停用定时任务
+          cd "$SPLITTER"
+          today=$(date -u +%F)
+          if [ "$(cat LAST_SYNC 2>/dev/null || true)" != "$today" ]; then
+            printf '%s\n' "$today" > LAST_SYNC
+            git config user.name "split bot"
+            git config user.email "bot@users.noreply.github.com"
+            git add LAST_SYNC
+            git commit -m "chore: heartbeat $today"
+            git push --quiet origin HEAD:main
+          fi
