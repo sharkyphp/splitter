@@ -43,7 +43,7 @@ jobs:
           git -C "$RUNNER_TEMP/mono" config user.name "split bot"
           git -C "$RUNNER_TEMP/mono" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Split and push 22 packages
+      - name: Split and push packages
         env:
           ORG: ${{ github.repository_owner }}
           APP_TOKEN: ${{ steps.app.outputs.token }}
@@ -65,13 +65,25 @@ jobs:
             repo=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
             remote="https://x-access-token:${TOKEN}@github.com/${ORG}/${repo}.git"
 
+            # 只处理已合入 origin/main 的包；本地未提交/拼写错误的目录直接跳过，
+            # 避免 'packages/X does not exist' 拖垮整次运行
+            if ! git ls-tree -d origin/main -- "packages/$name" >/dev/null 2>&1; then
+              echo "skip $name (absent at origin/main)"
+              continue
+            fi
+
             # 分支：只认 main
-            sha=$(git subtree split --prefix="packages/$name" origin/main)
+            sha=$(git subtree split --prefix="packages/$name" origin/main 2>/dev/null) \
+              || { echo "skip $name (no revisions at main)"; continue; }
             git push --quiet "$remote" "$sha:refs/heads/main" --force
 
             # tag：Packagist 的版本号完全依赖这一步
             for tag in $TAGS; do
-              tsha=$(git subtree split --prefix="packages/$name" "$tag")
+              # 该 package 在对应 tag 中不存在则跳过（新增包后旧 tag 不含此目录）
+              git ls-tree -r --name-only "$tag" -- "packages/$name" | grep -q . \
+                || { echo "skip $repo@$tag (prefix absent)"; continue; }
+              tsha=$(git subtree split --prefix="packages/$name" "$tag" 2>/dev/null) \
+                || { echo "skip $repo@$tag (no revisions)"; continue; }
               git push --quiet "$remote" "$tsha:refs/tags/$tag" --force
             done
 
