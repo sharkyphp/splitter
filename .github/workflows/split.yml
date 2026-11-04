@@ -1,6 +1,9 @@
 # 放在 splitter 仓库的 .github/workflows/split.yml
 # 需要：仓库 Secrets MONOREPO_URL、AUTH_MODE(app|pat)
 # 需要 secrets：app -> APP_ID + APP_PRIVATE_KEY；pat -> SPLIT_TOKEN
+# 联动：monorepo(bytesharky/sharkyphp-v2) 的 .github/workflows/trigger-split.yml
+#       在 push 到 main / 打 v* tag 且改动 packages/** 时，会 POST workflow_dispatch 唤醒本工作流
+# 本 hourly cron 仅作兜底，实际发版同步由上面的事件驱动触发
 name: split
 
 on:
