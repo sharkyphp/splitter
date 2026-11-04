@@ -1,5 +1,5 @@
 # 放在 splitter 仓库的 .github/workflows/split.yml
-# 需要：仓库变量 MONOREPO_URL、AUTH_MODE(app|pat)
+# 需要：仓库 Secrets MONOREPO_URL、AUTH_MODE(app|pat)
 # 需要 secrets：app -> APP_ID + APP_PRIVATE_KEY；pat -> SPLIT_TOKEN
 name: split
 
@@ -14,6 +14,9 @@ permissions:
 jobs:
   split:
     runs-on: ubuntu-latest
+    # secrets 不能直接用在 if: 里，先挂到 job 级 env 再判断
+    env:
+      AUTH_MODE: ${{ secrets.AUTH_MODE }}
     steps:
       - name: Checkout splitter
         uses: actions/checkout@v4
@@ -22,7 +25,7 @@ jobs:
 
       - name: GitHub App token
         id: app
-        if: ${{ vars.AUTH_MODE == 'app' }}
+        if: ${{ env.AUTH_MODE == 'app' }}
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.APP_ID }}
@@ -31,14 +34,14 @@ jobs:
 
       - name: Clone public monorepo (no credentials)
         env:
-          MONOREPO_URL: ${{ vars.MONOREPO_URL }}
+          MONOREPO_URL: ${{ secrets.MONOREPO_URL }}
         run: |
           set -euo pipefail
-          : "${MONOREPO_URL:?请在 splitter 仓库设置变量 MONOREPO_URL}"
+          : "${MONOREPO_URL:?请在 splitter 仓库设置 Secrets MONOREPO_URL}"
           git clone --quiet "$MONOREPO_URL" "$RUNNER_TEMP/mono"
           git -C "$RUNNER_TEMP/mono" fetch --quiet --tags origin '+refs/heads/*:refs/remotes/origin/*'
           git -C "$RUNNER_TEMP/mono" config user.name "split bot"
-          git -C "$RUNNER_TEMP/mono" config user.email "bot@users.noreply.github.com"
+          git -C "$RUNNER_TEMP/mono" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Split and push 22 packages
         env:
@@ -98,7 +101,7 @@ jobs:
           if [ "$(cat LAST_SYNC 2>/dev/null || true)" != "$today" ]; then
             printf '%s\n' "$today" > LAST_SYNC
             git config user.name "split bot"
-            git config user.email "bot@users.noreply.github.com"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add LAST_SYNC
             git commit -m "chore: heartbeat $today"
             git push --quiet origin HEAD:main
