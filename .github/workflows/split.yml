@@ -22,14 +22,14 @@ jobs:
       AUTH_MODE: ${{ secrets.AUTH_MODE }}
     steps:
       - name: Checkout splitter
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
       - name: GitHub App token
         id: app
         if: ${{ env.AUTH_MODE == 'app' }}
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
